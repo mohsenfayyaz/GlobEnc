@@ -1,0 +1,10 @@
+jupyterlab
+jupyter
+matplotlib
+numpy
+pandas
+scipy
+seaborn
+tqdm
+datasets
+transformers
