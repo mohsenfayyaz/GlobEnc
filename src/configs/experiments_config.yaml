@@ -2,7 +2,7 @@ SST2:
     MODEL_CHECKPOINT: TehranNLP-org/bert-base-uncased-cls-sst2
     MODEL_NAME: bert-base-uncased
     DATASET: sst2  # Loads in task_loader
-    SALIENCY_BLANK_OUT_PATH: ./saliency/sst2_val_sals_normbased_selfFT.npy
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/sst2_val_sals_normbased_selfFT.npy
     SALS_MAX_LENGTH: 64
     HTA_PATH: ./HTA/sst2_val256_HTA_undiv_PreTrained_alllayers.npy
 
@@ -10,12 +10,12 @@ MNLI:
     MODEL_CHECKPOINT: TehranNLP-org/bert-base-uncased-cls-mnli
     MODEL_NAME: bert-base-uncased
     DATASET: mnli
-    SALIENCY_BLANK_OUT_PATH: ./saliency/mnli_valmm_sals_normbased_selfFT.npy
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/mnli_valmm_sals_normbased_selfFT.npy
     SALS_MAX_LENGTH: 128
 
 HATEXPLAIN:
     MODEL_CHECKPOINT: TehranNLP-org/bert-base-uncased-cls-hatexplain
     MODEL_NAME: bert-base-uncased
     DATASET: hatexplain
-    SALIENCY_BLANK_OUT_PATH: ./saliency/hatexplain_val_sals_normbased_selfFT.npy
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/hatexplain_val_sals_normbased_selfFT.npy
     SALS_MAX_LENGTH: 72
