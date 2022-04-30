@@ -25,8 +25,8 @@ from packaging import version
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
-from ...activations import ACT2FN, get_activation
-from ...modeling_outputs import (
+from transformers.activations import ACT2FN, get_activation
+from transformers.modeling_outputs import (
     BaseModelOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
@@ -36,14 +36,14 @@ from ...modeling_outputs import (
     SequenceClassifierOutput,
     TokenClassifierOutput,
 )
-from ...modeling_utils import (
+from transformers.modeling_utils import (
     PreTrainedModel,
     SequenceSummary,
     apply_chunking_to_forward,
     find_pruneable_heads_and_indices,
     prune_linear_layer,
 )
-from ...utils import (
+from transformers.utils import (
     ModelOutput,
     add_code_sample_docstrings,
     add_start_docstrings,
@@ -51,7 +51,7 @@ from ...utils import (
     logging,
     replace_return_docstrings,
 )
-from .configuration_electra import ElectraConfig
+from transformers.models.electra.configuration_electra import ElectraConfig
 
 
 logger = logging.get_logger(__name__)
@@ -257,6 +257,7 @@ class ElectraSelfAttention(nn.Module):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
+        output_norms: Optional[bool] = False,  # added by Fayyaz / Modarressi
     ) -> Tuple[torch.Tensor]:
         mixed_query_layer = self.query(hidden_states)
 
@@ -336,6 +337,13 @@ class ElectraSelfAttention(nn.Module):
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(new_context_layer_shape)
 
+        # added by Fayyaz / Modarressi
+        # -------------------------------
+        if output_norms:
+            outputs = (context_layer, attention_probs, value_layer)
+            return outputs
+        # -------------------------------
+
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
 
         if self.is_decoder:
@@ -351,11 +359,118 @@ class ElectraSelfOutput(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor,
+                output_norms=False):  # added by Fayyaz / Modarressi
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states
+        # hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        # return hidden_states
+        pre_ln_states = hidden_states + input_tensor  # added by Fayyaz / Modarressi
+        post_ln_states = self.LayerNorm(pre_ln_states)  # added by Fayyaz / Modarressi
+        # added by Fayyaz / Modarressi
+        if output_norms:
+            return post_ln_states, pre_ln_states
+        else:
+            return post_ln_states
+
+
+class BertNormOutput(nn.Module):  # This class was added by Goro Kobayashi
+    def __init__(self, config):
+        super().__init__()
+        self.num_attention_heads = config.num_attention_heads
+        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+    def forward(self, hidden_states, attention_probs, value_layer, dense, LayerNorm, pre_ln_states):
+        # Args:
+        #   hidden_states: Representations from previous layer and inputs to self-attention. (batch, seq_length, all_head_size)
+        #   attention_probs: Attention weights calculated in self-attention. (batch, num_heads, seq_length, seq_length)
+        #   value_layer: Value vectors calculated in self-attention. (batch, num_heads, seq_length, head_size)
+        #   dense: Dense layer in self-attention. nn.Linear(all_head_size, all_head_size)
+        #   LayerNorm: nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        #   pre_ln_states: Vectors just before LayerNorm (batch, seq_length, all_head_size)
+
+        with torch.no_grad():
+            # Make transformed vectors f(x) from Value vectors (value_layer) and weight matrix (dense).
+            dense = dense.weight.view(self.all_head_size, self.num_attention_heads,
+                                      self.attention_head_size)  # W^o (768, 768)
+            transformed_layer = torch.einsum('bhsv,dhv->bhsd', value_layer, dense)  # V * W^o  (z=(qk)v)
+
+            # Make weighted vectors αf(x) from transformed vectors (transformed_layer)
+            # and attention weights (attentions):
+            # (batch, num_heads, seq_length, seq_length, all_head_size)
+            weighted_layer = torch.einsum('bhks,bhsd->bhksd', attention_probs,
+                                          transformed_layer)  # attention_probs(Q*K^t) * V * W^o
+            weighted_norm = torch.norm(weighted_layer, dim=-1)  # norm of attended tokens representations
+
+            # Sum each weighted vectors αf(x) over all heads:
+            # (batch, seq_length, seq_length, all_head_size)
+            summed_weighted_layer = weighted_layer.sum(dim=1)  # sum over heads
+            summed_weighted_norm = torch.norm(summed_weighted_layer, dim=-1)  # norm of ||Σαf(x)||
+
+            """ここからがnew"""
+            # Make residual matrix (batch, seq_length, seq_length, all_head_size)
+            hidden_shape = hidden_states.size()  # (batch, seq_length, all_head_size)
+            device = hidden_states.device
+            residual = torch.einsum('sk,bsd->bskd', torch.eye(hidden_shape[1]).to(device),
+                                    hidden_states)  # diagonal representations (hidden states)
+
+            # Make matrix of summed weighted vector + residual vectors
+            residual_weighted_layer = summed_weighted_layer + residual
+            residual_weighted_norm = torch.norm(residual_weighted_layer, dim=-1)  # ||Σαf(x) + x||
+
+            # consider layernorm
+            ln_weight = LayerNorm.weight.data  # gama
+            ln_eps = LayerNorm.eps
+
+            # 実際にLayerNormにかけられるベクトル pre_ln_states の平均・分散を計算
+            mean = pre_ln_states.mean(-1, keepdim=True)  # (batch, seq_len, 1) m(y=Σy_j)
+            var = (pre_ln_states - mean).pow(2).mean(-1, keepdim=True).unsqueeze(dim=2)  # (batch, seq_len, 1, 1)  s(y)
+
+            # attention + residual のサムの中のベクトルごとに平均を計算
+            each_mean = residual_weighted_layer.mean(-1, keepdim=True)  # (batch, seq_len, seq_len, 1) m(y_j)
+
+            # attention + residual のサムの中の各ベクトルから，各平均を引き，標準偏差で割る
+            # (LayerNorm の normalization 部分をサムの中のベクトルごとに実行していることに相当)
+            normalized_layer = torch.div(residual_weighted_layer - each_mean,
+                                         (var + ln_eps) ** (1 / 2))  # (batch, seq_len, seq_len, all_head_size)
+
+            # さらに，LayerNorm の重みでエレメント積を各ベクトルに対して実行
+            post_ln_layer = torch.einsum('bskd,d->bskd', normalized_layer,
+                                         ln_weight)  # (batch, seq_len, seq_len, all_head_size)
+            post_ln_norm = torch.norm(post_ln_layer, dim=-1)  # (batch, seq_len, seq_len)
+
+            # Attn-N の mixing ratio
+            attn_preserving = torch.diagonal(summed_weighted_layer, dim1=1, dim2=2).permute(0, 2, 1)
+            attn_mixing = torch.sum(summed_weighted_layer, dim=2) - attn_preserving
+            attn_preserving_norm = torch.norm(attn_preserving, dim=-1)
+            attn_mixing_norm = torch.norm(attn_mixing, dim=-1)
+            attn_n_mixing_ratio = attn_mixing_norm / (attn_mixing_norm + attn_preserving_norm)
+
+            # AttnRes-N の mixing ratio
+            before_ln_preserving = torch.diagonal(residual_weighted_layer, dim1=1, dim2=2).permute(0, 2, 1)
+            before_ln_mixing = torch.sum(residual_weighted_layer, dim=2) - before_ln_preserving
+            before_ln_preserving_norm = torch.norm(before_ln_preserving, dim=-1)
+            before_ln_mixing_norm = torch.norm(before_ln_mixing, dim=-1)
+            attnres_n_mixing_ratio = before_ln_mixing_norm / (before_ln_mixing_norm + before_ln_preserving_norm)
+
+            # AttnResLn-N の mixing ratio
+            post_ln_preserving = torch.diagonal(post_ln_layer, dim1=1, dim2=2).permute(0, 2, 1)
+            post_ln_mixing = torch.sum(post_ln_layer, dim=2) - post_ln_preserving
+            post_ln_preserving_norm = torch.norm(post_ln_preserving, dim=-1)
+            post_ln_mixing_norm = torch.norm(post_ln_mixing, dim=-1)
+            attnresln_n_mixing_ratio = post_ln_mixing_norm / (post_ln_mixing_norm + post_ln_preserving_norm)
+
+            outputs = (weighted_norm,  # ||αf(x)||
+                       summed_weighted_norm,  # ||Σαf(x)||
+                       residual_weighted_norm,  # ||Σαf(x) + x||
+                       post_ln_norm,  # Norm of vectors after LayerNorm
+                       post_ln_layer,
+                       attn_n_mixing_ratio,  # Mixing ratio for Attn-N
+                       attnres_n_mixing_ratio,  # Mixing ratio for AttnRes-N
+                       attnresln_n_mixing_ratio,  # Mixing ratio for AttnResLn-N
+                       )
+        return outputs
 
 
 # Copied from transformers.models.bert.modeling_bert.BertAttention with Bert->Electra
@@ -365,6 +480,7 @@ class ElectraAttention(nn.Module):
         self.self = ElectraSelfAttention(config, position_embedding_type=position_embedding_type)
         self.output = ElectraSelfOutput(config)
         self.pruned_heads = set()
+        self.norm = BertNormOutput(config)  # added by Goro Kobayashi
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -393,6 +509,7 @@ class ElectraAttention(nn.Module):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
+        output_norms: Optional[bool] = False,  # added by Goro Kobayashi
     ) -> Tuple[torch.Tensor]:
         self_outputs = self.self(
             hidden_states,
@@ -402,8 +519,42 @@ class ElectraAttention(nn.Module):
             encoder_attention_mask,
             past_key_value,
             output_attentions,
+            output_norms=output_norms,  # added by Goro Kobayashi
         )
-        attention_output = self.output(self_outputs[0], hidden_states)
+        attention_output = self.output(
+            self_outputs[0],
+            hidden_states,
+            output_norms=output_norms,  # added by Goro Kobayashi
+        )
+
+        # Added by Fayyaz / Modarressi
+        # -------------------------------
+        if output_norms:
+            _, attention_probs, value_layer = self_outputs
+            attention_output, pre_ln_states = attention_output
+            norms_outputs = self.norm(
+                hidden_states,
+                attention_probs,
+                value_layer,
+                self.output.dense,
+                self.output.LayerNorm,
+                pre_ln_states,
+            )
+            outputs = (attention_output, attention_probs,) + norms_outputs  # add attentions and norms if we output them
+            """
+            # outputs: 
+                attention_output
+                attention_probs
+                transformed_norm
+                summed_weighted_norm
+                residual_weighted_norm
+                post_ln_norm
+                before_ln_mixing_ratio
+                post_ln_mixing_ratio
+            """
+            return outputs
+        # -------------------------------
+
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
@@ -432,11 +583,17 @@ class ElectraOutput(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states
+        # hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        # return hidden_states
+        # Added by Fayyaz / Modarressi
+        # -------------------------------
+        pre_ln_states = hidden_states + input_tensor
+        hidden_states = self.LayerNorm(pre_ln_states)
+        return hidden_states, pre_ln_states
+        # -------------------------------
 
 
 # Copied from transformers.models.bert.modeling_bert.BertLayer with Bert->Electra
@@ -464,16 +621,24 @@ class ElectraLayer(nn.Module):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
+        output_norms: Optional[bool] = False,  # added by Goro Kobayashi
     ) -> Tuple[torch.Tensor]:
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+        # self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+        # self_attention_outputs = self.attention(
+        #     hidden_states,
+        #     attention_mask,
+        #     head_mask,
+        #     output_attentions=output_attentions,
+        #     past_key_value=self_attn_past_key_value,
+        # )
         self_attention_outputs = self.attention(
             hidden_states,
             attention_mask,
             head_mask,
             output_attentions=output_attentions,
-            past_key_value=self_attn_past_key_value,
-        )
+            output_norms=output_norms,
+        )  # changed by Goro Kobayashi
         attention_output = self_attention_outputs[0]
 
         # if decoder, the last output is tuple of self-attn cache
@@ -508,9 +673,36 @@ class ElectraLayer(nn.Module):
             cross_attn_present_key_value = cross_attention_outputs[-1]
             present_key_value = present_key_value + cross_attn_present_key_value
 
-        layer_output = apply_chunking_to_forward(
-            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
-        )
+        # layer_output = apply_chunking_to_forward(
+        #     self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
+        # )
+
+        # Added by Fayyaz / Modarressi
+        # -------------------------------
+        intermediate_output = self.intermediate(attention_output)
+        layer_output, pre_ln2_states = self.output(intermediate_output, attention_output)
+        if output_norms:
+            post_ln_layer = outputs[5]
+            each_mean = post_ln_layer.mean(-1, keepdim=True)
+
+            mean = pre_ln2_states.mean(-1, keepdim=True)
+            var = (pre_ln2_states - mean).pow(2).mean(-1, keepdim=True).unsqueeze(dim=2)
+
+            normalized_layer = torch.div(post_ln_layer - each_mean, (var + self.output.LayerNorm.eps) ** (1 / 2))
+            post_ln2_layer = torch.einsum('bskd,d->bskd', normalized_layer, self.output.LayerNorm.weight)
+            post_ln2_norm = torch.norm(post_ln2_layer, dim=-1)
+
+            # N-ResOut  mixing ratio
+            post_ln2_preserving = torch.diagonal(post_ln2_layer, dim1=1, dim2=2).permute(0, 2, 1)
+            post_ln2_mixing = torch.sum(post_ln2_layer, dim=2) - post_ln2_preserving
+            post_ln2_preserving_norm = torch.norm(post_ln2_preserving, dim=-1)
+            post_ln2_mixing_norm = torch.norm(post_ln2_mixing, dim=-1)
+            attnresln2_n_mixing_ratio = post_ln2_mixing_norm / (post_ln2_mixing_norm + post_ln2_preserving_norm)
+
+            new_outputs = outputs[:5] + (post_ln2_norm,) + outputs[6:] + (attnresln2_n_mixing_ratio,)
+            return (layer_output,) + new_outputs
+        # -------------------------------
+
         outputs = (layer_output,) + outputs
 
         # if decoder, return the attn key/values as the last output
@@ -545,12 +737,14 @@ class ElectraEncoder(nn.Module):
         output_attentions: Optional[bool] = False,
         output_hidden_states: Optional[bool] = False,
         return_dict: Optional[bool] = True,
+        output_norms: Optional[bool] = False,  # added by Goro Kobayashi
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
 
         next_decoder_cache = () if use_cache else None
+        all_norms = ()  # added by Goro Kobayashi
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -589,6 +783,7 @@ class ElectraEncoder(nn.Module):
                     encoder_attention_mask,
                     past_key_value,
                     output_attentions,
+                    output_norms,  # added by Goro Kobayashi
                 )
 
             hidden_states = layer_outputs[0]
@@ -598,6 +793,10 @@ class ElectraEncoder(nn.Module):
                 all_self_attentions = all_self_attentions + (layer_outputs[1],)
                 if self.config.add_cross_attention:
                     all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+
+            # added by Goro Kobayashi
+            if output_norms:
+                all_norms = all_norms + (layer_outputs[2:],)
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
@@ -611,6 +810,7 @@ class ElectraEncoder(nn.Module):
                     all_hidden_states,
                     all_self_attentions,
                     all_cross_attentions,
+                    all_norms,  # Added by Fayyaz / Modarressi
                 ]
                 if v is not None
             )
@@ -855,6 +1055,7 @@ class ElectraModel(ElectraPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        output_norms: Optional[bool] = None,  # added by Goro Kobayashi
     ) -> Union[Tuple, BaseModelOutputWithCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -924,6 +1125,7 @@ class ElectraModel(ElectraPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            output_norms=output_norms,  # added by Goro Kobayashi
         )
 
         return hidden_states
@@ -988,6 +1190,7 @@ class ElectraForSequenceClassification(ElectraPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        output_norms: Optional[bool] = None,  # added by Fayyaz / Modarressi
     ) -> Union[Tuple, SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -1007,6 +1210,7 @@ class ElectraForSequenceClassification(ElectraPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            output_norms=output_norms,  # added by Fayyaz / Modarressi
         )
 
         sequence_output = discriminator_hidden_states[0]

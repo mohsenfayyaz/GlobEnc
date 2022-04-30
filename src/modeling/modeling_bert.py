@@ -624,7 +624,7 @@ class BertLayer(nn.Module):
             output_norms: Optional[bool] = False,  # added by Goro Kobayashi
     ) -> Tuple[torch.Tensor]:
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+        # self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
         # self_attention_outputs = self.attention(
         #     hidden_states,
         #     attention_mask,
