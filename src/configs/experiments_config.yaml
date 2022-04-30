@@ -1,6 +1,7 @@
+# BERT base
 SST2:
     MODEL_CHECKPOINT: TehranNLP-org/bert-base-uncased-cls-sst2
-    MODEL_NAME: bert-base-uncased
+    MODEL_NAME: bert-base-uncased  # Used for tokenizer
     DATASET: sst2  # Loads in task_loader
     SALIENCY_BLANK_OUT_PATH: ../src/gradients/sst2_val_sals_normbased_selfFT.npy
     SALS_MAX_LENGTH: 64
@@ -14,6 +15,51 @@ MNLI:
     SALS_MAX_LENGTH: 128
 
 HATEXPLAIN:
+    MODEL_CHECKPOINT: TehranNLP-org/bert-base-uncased-cls-hatexplain
+    MODEL_NAME: bert-base-uncased
+    DATASET: hatexplain
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/hatexplain_val_sals_normbased_selfFT.npy
+    SALS_MAX_LENGTH: 72
+
+# ELECTRA base
+SST2-ELECTRA:
+    MODEL_CHECKPOINT: howey/electra-base-sst2
+    MODEL_NAME: howey/electra-base-sst2
+    DATASET: sst2
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/electra_base_sst2_val_sals.npy
+    SALS_MAX_LENGTH: 64
+
+MNLI-ELECTRA:
+    MODEL_CHECKPOINT: TehranNLP-org/electra-base-mnli
+    MODEL_NAME: TehranNLP-org/electra-base-mnli
+    DATASET: mnli
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/electra_base_mnli_val-mm_sals.npy
+    SALS_MAX_LENGTH: 128
+
+HATEXPLAIN-ELECTRA:
+    MODEL_CHECKPOINT: TehranNLP-org/electra-base-hateXplain
+    MODEL_NAME: TehranNLP-org/electra-base-hateXplain
+    DATASET: hatexplain
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/electra_base_hatexplain_val_sals.npy
+    SALS_MAX_LENGTH: 72
+
+# BERT large
+SST2-BERT-large:
+    MODEL_CHECKPOINT: TehranNLP-org/bert-large-mnli
+    MODEL_NAME: TehranNLP-org/bert-large-mnli
+    DATASET: sst2
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/bert_large_mnli_val-mm_sals.npy
+    SALS_MAX_LENGTH: 64
+    HTA_PATH: ./HTA/sst2_val256_HTA_undiv_PreTrained_alllayers.npy
+
+MNLI-BERT-large:
+    MODEL_CHECKPOINT: TehranNLP-org/bert-large-mnli
+    MODEL_NAME: TehranNLP-org/bert-large-mnli
+    DATASET: mnli
+    SALIENCY_BLANK_OUT_PATH: ../src/gradients/bert_large_mnli_val-mm_sals.npy
+    SALS_MAX_LENGTH: 128
+
+HATEXPLAIN-BERT-large:
     MODEL_CHECKPOINT: TehranNLP-org/bert-base-uncased-cls-hatexplain
     MODEL_NAME: bert-base-uncased
     DATASET: hatexplain

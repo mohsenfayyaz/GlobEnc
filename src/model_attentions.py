@@ -31,8 +31,9 @@ def extract_attentions(model, encoder_func, dataset_len, device="cpu", delete_se
         if delete_sep:
             last_token -= 1
 
+        num_layers = len(attentions)
         for attention_type in range(9):
-            norm = torch.stack([norms[i][attention_type] for i in range(12)]).squeeze().cpu().numpy()
+            norm = torch.stack([norms[i][attention_type] for i in range(num_layers)]).squeeze().cpu().numpy()
             if 0 < attention_type < 5:  # N: 1, N-Res: 2, N-ResLN: 3, N-Enc: 4
                 norm = norm[:, :last_token, :last_token]
             elif attention_type >= 5:
@@ -49,7 +50,7 @@ def build_ratio_residual_attentions(raw_attentions_list, norms_list):
         "W-FixedRes": [],
         "W-Res": [],
         "N-FixedRes": [],
-        "Uniform-Res": []
+        # "Uniform-Res": []
     }
     for idx in tqdm(range(len(raw_attentions_list))):
         raw_attention = raw_attentions_list[idx]
@@ -64,8 +65,8 @@ def build_ratio_residual_attentions(raw_attentions_list, norms_list):
         # norms_list[8]: N-Enc_ratio
         r_ratio_attentions["W-Res"].append(__build_ratio_residual_attention(raw_attention, norms_list[8][idx], wres=True))
 
-        r_ratio_attentions["Uniform-Res"].append(
-            __build_ratio_residual_attention(np.ones_like(raw_attention) / len(raw_attention), norms_list[8][idx]))
+        # r_ratio_attentions["Uniform-Res"].append(
+        #     __build_ratio_residual_attention(np.ones_like(raw_attention) / len(raw_attention), norms_list[8][idx]))
 
     return r_ratio_attentions
 
