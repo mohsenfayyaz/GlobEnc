@@ -50,7 +50,6 @@ SST2-BERT-large:
     DATASET: sst2
     SALIENCY_BLANK_OUT_PATH: ../src/gradients/bert_large_sst2_val_sals.npy
     SALS_MAX_LENGTH: 64
-    HTA_PATH: ./HTA/sst2_val256_HTA_undiv_PreTrained_alllayers.npy
 
 MNLI-BERT-large:
     MODEL_CHECKPOINT: TehranNLP-org/bert-large-mnli
