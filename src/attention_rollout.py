@@ -6,6 +6,13 @@ from ..src.attention_flow_abstract import AttentionFlow
 
 class AttentionRollout(AttentionFlow, ABC):
     def compute_flows(self, attentions_list, desc="", output_hidden_states=False, num_cpus=0):
+        """
+        :param attentions_list: list of attention maps (#examples, #layers, #sent_len, #sent_len)
+        :param desc:
+        :param output_hidden_states:
+        :param num_cpus:
+        :return:
+        """
         attentions_rollouts = []
         for i in tqdm(range(len(attentions_list)), desc=desc):
             if output_hidden_states:
