@@ -1,7 +1,10 @@
 from abc import ABC
 import numpy as np
 from tqdm.auto import tqdm
-from ..src.attention_flow_abstract import AttentionFlow
+try:
+    from src.attention_flow_abstract import AttentionFlow
+except Exception:
+    from ..src.attention_flow_abstract import AttentionFlow
 
 
 class AttentionRollout(AttentionFlow, ABC):
