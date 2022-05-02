@@ -23,8 +23,8 @@ HATEXPLAIN:
 
 # ELECTRA base
 SST2-ELECTRA:
-    MODEL_CHECKPOINT: howey/electra-base-sst2
-    MODEL_NAME: howey/electra-base-sst2
+    MODEL_CHECKPOINT: TehranNLP-org/electra-base-sst2
+    MODEL_NAME: TehranNLP-org/electra-base-sst2
     DATASET: sst2
     SALIENCY_BLANK_OUT_PATH: ../src/gradients/electra_base_sst2_val_sals.npy
     SALS_MAX_LENGTH: 64
