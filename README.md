@@ -1,5 +1,7 @@
 # GlobEnc
-[NAACL 2022] GlobEnc: Quantifying Global Token Attribution by Incorporating the Whole Encoder Layer in Transformers
+[NAACL 2022] GlobEnc: Quantifying Global Token Attribution by Incorporating the Whole Encoder Layer in Transformers <br>
+[[📝 Paper]](https://aclanthology.org/2022.naacl-main.19/)
+[[🎥 Video]](https://youtu.be/jgd9kUJlug4)
 
 # Web Demo
 
@@ -14,7 +16,7 @@ Also check this Colab notebook to see what BERT attends to <a href="https://cola
 ![alt text](./img/globenc.png)
 
 ## Citation
-If you found this work useful, consider citing our paper:
+If you found this work useful, please consider citing our paper:
 ```bibtex
 @inproceedings{modarressi-etal-2022-globenc,
     title = "{G}lob{E}nc: Quantifying Global Token Attribution by Incorporating the Whole Encoder Layer in Transformers",
