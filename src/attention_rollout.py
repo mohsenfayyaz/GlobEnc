@@ -8,7 +8,7 @@ except Exception:
 
 
 class AttentionRollout(AttentionFlow, ABC):
-    def compute_flows(self, attentions_list, desc="", output_hidden_states=False, num_cpus=0):
+    def compute_flows(self, attentions_list, desc="", output_hidden_states=False, num_cpus=0, disable_tqdm=False):
         """
         :param attentions_list: list of attention maps (#examples, #layers, #sent_len, #sent_len)
         :param desc:
@@ -17,7 +17,7 @@ class AttentionRollout(AttentionFlow, ABC):
         :return:
         """
         attentions_rollouts = []
-        for i in tqdm(range(len(attentions_list)), desc=desc):
+        for i in tqdm(range(len(attentions_list)), desc=desc, disable=disable_tqdm):
             if output_hidden_states:
                 attentions_rollouts.append(self.compute_joint_attention(attentions_list[i]))
             else:
