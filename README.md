@@ -3,6 +3,8 @@
 [[📝 Paper]](https://aclanthology.org/2022.naacl-main.19/)
 [[🎥 Video]](https://youtu.be/jgd9kUJlug4)
 
+> * <b>Please check out [DecompX](https://github.com/mohsenfayyaz/DecompX) for a more faithful approach.</b>
+
 # Web Demo
 
 Integrated into [Huggingface Spaces 🤗](https://huggingface.co/spaces) using [Gradio](https://github.com/gradio-app/gradio). Try out the Web Demo [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/NAACL2022/GlobEnc)
